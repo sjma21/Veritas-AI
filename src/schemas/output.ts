@@ -16,6 +16,7 @@ export const StreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("critic"), message: z.string(), passed: z.boolean() }),
   z.object({ type: z.literal("token"), content: z.string() }),
   z.object({ type: z.literal("final"), output: AgentOutputSchema }),
+  z.object({ type: z.literal("cache_hit"), similarity: z.number() }),
   z.object({ type: z.literal("error"), message: z.string() }),
   z.object({ type: z.literal("done") }),
 ]);

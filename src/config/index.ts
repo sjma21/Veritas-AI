@@ -41,6 +41,12 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.string().default("info"),
 
+  // Semantic cache
+  SEMANTIC_CACHE_ENABLED: z.coerce.boolean().default(true),
+  SEMANTIC_CACHE_THRESHOLD: z.coerce.number().default(0.97),
+  SEMANTIC_CACHE_TTL_SECONDS: z.coerce.number().default(3600),
+  SEMANTIC_CACHE_COLLECTION: z.string().default("veritas_semantic_cache"),
+
   // LangSmith — optional observability
   LANGSMITH_API_KEY: z.string().optional(),
   LANGSMITH_PROJECT: z.string().default("veritas-ai"),
