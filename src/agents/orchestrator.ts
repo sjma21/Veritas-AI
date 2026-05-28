@@ -15,6 +15,7 @@ import { VectorStore } from "../retrieval/vector_store.js";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { estimateCost, truncateToTokenLimit } from "../utils/token_counter.js";
+import type { McpClient } from "../mcp/index.js";
 
 export interface AgentRunOptions {
   userMessage: string;
@@ -38,10 +39,19 @@ type AgentMessage =
   | { role: "assistant"; content: string | Anthropic.MessageParam["content"] };
 
 export class AgentOrchestrator {
+  private mcpToolNames = new Set<string>();
+
   constructor(
     private vectorStore: VectorStore,
-    private memoryManager: MemoryManager
-  ) {}
+    private memoryManager: MemoryManager,
+    private mcpClient?: McpClient
+  ) {
+    if (mcpClient) {
+      for (const t of mcpClient.getToolDefinitions()) {
+        this.mcpToolNames.add(t.name);
+      }
+    }
+  }
 
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
     const { userMessage, sessionId, conversationHistory, emit } = options;
@@ -108,13 +118,18 @@ export class AgentOrchestrator {
       iteration++;
       logger.debug({ iteration, sessionId }, "Agent loop iteration");
 
+      // Merge local tools with MCP tools so the model can call either
+      const allTools = this.mcpClient
+        ? [...TOOL_DEFINITIONS, ...this.mcpClient.getToolDefinitions()]
+        : TOOL_DEFINITIONS;
+
       const result = await complete({
         model: config.MODEL_STRONG,
         system: systemPrompt,
         messages: messages as SimpleMessage[],
         temperature: 0.2,
         maxTokens: 1200,
-        tools: TOOL_DEFINITIONS,
+        tools: allTools,
       });
 
       totalInputTokens += result.inputTokens;
@@ -126,7 +141,11 @@ export class AgentOrchestrator {
 
         emit({ type: "tool_call", tool: toolName, input: toolArgs });
 
-        const rawOutput = await executeTool(toolName, toolArgs as Record<string, string>);
+        // Route to MCP client if it's an MCP tool, otherwise use local executor
+        const rawOutput = this.mcpToolNames.has(toolName) && this.mcpClient
+          ? await this.mcpClient.callTool({ name: toolName, input: toolArgs as Record<string, unknown> })
+          : await executeTool(toolName, toolArgs as Record<string, string>);
+
         const truncatedOutput = truncateToTokenLimit(rawOutput, config.TOOL_OUTPUT_MAX_TOKENS);
 
         emit({ type: "tool_result", tool: toolName, output: truncatedOutput });
