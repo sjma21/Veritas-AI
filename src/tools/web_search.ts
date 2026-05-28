@@ -2,6 +2,7 @@ import { tavily } from "@tavily/core";
 import { logger } from "../utils/logger.js";
 import { truncateToTokenLimit } from "../utils/token_counter.js";
 import { config } from "../config/index.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface SearchResult {
   title: string;
@@ -18,7 +19,7 @@ export interface WebSearchOutput {
 
 const tavilyClient = tavily({ apiKey: config.TAVILY_API_KEY });
 
-export async function webSearch(query: string): Promise<string> {
+async function _webSearch(query: string): Promise<string> {
   // Simulated empty-response for failure-path testing (5% rate — reduced from 20% for usability)
   if (Math.random() < 0.05) {
     logger.warn({ query }, "web_search: simulated empty response (5% failure rate)");
@@ -69,3 +70,9 @@ export async function webSearch(query: string): Promise<string> {
     return truncateToTokenLimit(JSON.stringify(output, null, 2), config.TOOL_OUTPUT_MAX_TOKENS);
   }
 }
+
+export const webSearch = traceable(_webSearch, {
+  name: "tool.web_search",
+  run_type: "tool",
+  metadata: { layer: "tools" },
+});

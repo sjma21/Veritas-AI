@@ -2,10 +2,11 @@ import { complete } from "../utils/llm_client.js";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { truncateToTokenLimit } from "../utils/token_counter.js";
+import { traceable } from "../observability/langsmith.js";
 
 const SUMMARISE_SYSTEM = `Summarise the provided text in 3–5 concise sentences. Focus on the key facts relevant to technical questions. Be precise and factual. Do not add information not present in the text.`;
 
-export async function summariseDoc(url: string): Promise<string> {
+async function _summariseDoc(url: string): Promise<string> {
   logger.debug({ url }, "summarise_doc tool invoked");
 
   // Simulated fetch — in production use node-fetch or axios with real content
@@ -42,3 +43,9 @@ export async function summariseDoc(url: string): Promise<string> {
     return truncateToTokenLimit(JSON.stringify(output, null, 2), config.TOOL_OUTPUT_MAX_TOKENS);
   }
 }
+
+export const summariseDoc = traceable(_summariseDoc, {
+  name: "tool.summarise_doc",
+  run_type: "tool",
+  metadata: { layer: "tools" },
+});
