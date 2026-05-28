@@ -9,6 +9,7 @@ import { cacheManager } from "../../cache/cache_manager.js";
 import { logger } from "../../utils/logger.js";
 import type { McpClient } from "../../mcp/index.js";
 import type { SemanticCache } from "../../cache/semantic_cache.js";
+import { checkInput, checkOutput } from "../../guardrails/index.js";
 
 export function createChatRouter(
   vectorStore: VectorStore,
@@ -43,20 +44,35 @@ export function createChatRouter(
       const emit = (event: StreamEvent) => sendSSEEvent(res, event);
 
       try {
+        // ── Input guardrails ──────────────────────────────────────────────
+        const inputCheck = await checkInput(message, emit);
+        if (!inputCheck.allowed) {
+          const reason = inputCheck.violations.map((v) => v.detail).join("; ");
+          sendSSEEvent(res, { type: "error", message: `Request blocked by guardrails: ${reason}` });
+          sendSSEDone(res);
+          return;
+        }
+
         const result = await orchestrator.run({
-          userMessage: message,
+          userMessage: inputCheck.sanitizedText,
           sessionId,
           conversationHistory: history as any,
           stream: true,
           emit,
         });
 
+        // ── Output guardrails ─────────────────────────────────────────────
+        const outputCheck = await checkOutput(result.output.answer, emit);
+        if (!outputCheck.allowed || outputCheck.sanitizedText !== result.output.answer) {
+          result.output.answer = outputCheck.sanitizedText;
+        }
+
         // Update conversation history
         const updatedHistory = [
           ...history,
-          { role: "user", content: message },
+          { role: "user", content: inputCheck.sanitizedText },
           { role: "assistant", content: result.output.answer },
-        ].slice(-20); // Keep last 20 turns
+        ].slice(-20);
 
         await cacheManager.set(historyKey, updatedHistory);
 

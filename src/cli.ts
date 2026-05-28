@@ -62,6 +62,18 @@ function renderEvent(event: Record<string, unknown>, inTokenStream: boolean): bo
       return false;
     }
 
+    case "guardrail": {
+      const icons: Record<string, string> = { redacted: "🔒", blocked: "🚫", warned: "⚠" };
+      const colors: Record<string, string> = { redacted: c.blue, blocked: c.red, warned: c.yellow };
+      const action = event.action as string;
+      const icon = icons[action] ?? "⚠";
+      const col = colors[action] ?? c.yellow;
+      process.stdout.write(
+        `  ${icon}  ${paint(col, `[guardrail:${event.check}]`)} ${paint(c.dim, String(event.detail))}\n`
+      );
+      return false;
+    }
+
     case "retrieval":
       process.stdout.write(paint(c.dim, `  ↳ ${event.message}\n`));
       return false;
