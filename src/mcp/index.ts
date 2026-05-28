@@ -4,6 +4,7 @@ import { buildCorpusServer } from "./corpus_server.js";
 import { VectorStore } from "../retrieval/vector_store.js";
 import { logger } from "../utils/logger.js";
 import type { AnthropicTool } from "../utils/llm_client.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface McpToolCall {
   name: string;
@@ -46,8 +47,8 @@ export async function createInProcessMcpClient(vectorStore: VectorStore): Promis
     input_schema: t.inputSchema as AnthropicTool["input_schema"],
   }));
 
-  return {
-    async callTool({ name, input }: McpToolCall): Promise<string> {
+  const _callTool = traceable(
+    async ({ name, input }: McpToolCall): Promise<string> => {
       logger.debug({ name, input }, "MCP tool call");
       const result = await client.callTool({ name, arguments: input });
 
@@ -61,6 +62,13 @@ export async function createInProcessMcpClient(vectorStore: VectorStore): Promis
       }
 
       return texts;
+    },
+    { name: "mcp.call_tool", run_type: "tool", metadata: { layer: "mcp" } }
+  );
+
+  return {
+    async callTool(call: McpToolCall): Promise<string> {
+      return _callTool(call);
     },
 
     getToolDefinitions(): AnthropicTool[] {

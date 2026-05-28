@@ -16,6 +16,7 @@ import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { estimateCost, truncateToTokenLimit } from "../utils/token_counter.js";
 import type { McpClient } from "../mcp/index.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface AgentRunOptions {
   userMessage: string;
@@ -51,6 +52,19 @@ export class AgentOrchestrator {
         this.mcpToolNames.add(t.name);
       }
     }
+    // Wrap run() as the root LangSmith span — all child spans nest under it
+    this.run = traceable(this.run.bind(this), {
+      name: "agent.run",
+      run_type: "chain",
+      metadata: { layer: "agent" },
+      processOutputs: (out: Record<string, unknown>) => ({
+        confidence: (out.output as AgentRunResult["output"])?.confidence,
+        iterationsUsed: out.iterationsUsed,
+        inputTokens: out.inputTokens,
+        outputTokens: out.outputTokens,
+        estimatedCostUsd: out.estimatedCostUsd,
+      }),
+    });
   }
 
   async run(options: AgentRunOptions): Promise<AgentRunResult> {
