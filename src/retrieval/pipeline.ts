@@ -4,6 +4,7 @@ import { rerank, detectContradictions } from "./reranker.js";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import type { StreamEvent } from "../schemas/output.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface RetrievalResult {
   chunks: RetrievedChunk[];
@@ -15,7 +16,7 @@ export interface RetrievalResult {
 
 export type StreamEmitter = (event: StreamEvent) => void;
 
-export async function runRetrievalPipeline(
+async function _runRetrievalPipeline(
   originalQuery: string,
   vectorStore: VectorStore,
   emit: StreamEmitter,
@@ -85,6 +86,19 @@ export async function runRetrievalPipeline(
 
   return { chunks: reranked, rewrittenQuery, confidence, contradictions, belowThreshold };
 }
+
+export const runRetrievalPipeline = traceable(_runRetrievalPipeline, {
+  name: "retrieval.pipeline",
+  run_type: "retriever",
+  metadata: { layer: "retrieval" },
+  processOutputs: (out: RetrievalResult) => ({
+    rewrittenQuery: out.rewrittenQuery,
+    confidence: out.confidence,
+    chunkCount: out.chunks.length,
+    contradictionCount: out.contradictions.length,
+    belowThreshold: out.belowThreshold,
+  }),
+});
 
 function computeConfidence(chunks: RetrievedChunk[]): number {
   if (chunks.length === 0) return 0;

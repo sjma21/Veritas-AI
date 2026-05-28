@@ -2,6 +2,7 @@ import { complete } from "../utils/llm_client.js";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import type { RetrievedChunk } from "./vector_store.js";
+import { traceable } from "../observability/langsmith.js";
 
 const RERANK_SYSTEM = `You are a relevance scoring assistant. Given a query and a document chunk, output a single number from 0.0 to 1.0 representing how relevant the document is to answering the query. 0=not relevant, 1=highly relevant. Output ONLY the number, nothing else.`;
 
@@ -9,7 +10,7 @@ const RERANK_SYSTEM = `You are a relevance scoring assistant. Given a query and 
  * LLM-based reranker. Scores each candidate against the query and reorders.
  * Falls back to original bi-encoder scores on failure.
  */
-export async function rerank(
+async function _rerank(
   query: string,
   chunks: RetrievedChunk[],
   topK = config.RERANK_TOP_K
@@ -50,6 +51,12 @@ export async function rerank(
     return chunks.slice(0, topK);
   }
 }
+
+export const rerank = traceable(_rerank, {
+  name: "retrieval.rerank",
+  run_type: "chain",
+  metadata: { layer: "retrieval" },
+});
 
 export function detectContradictions(chunks: RetrievedChunk[]): string[] {
   const contradictionPairs: string[] = [];

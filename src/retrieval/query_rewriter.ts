@@ -1,6 +1,7 @@
 import { complete } from "../utils/llm_client.js";
 import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
+import { traceable } from "../observability/langsmith.js";
 
 const REWRITE_SYSTEM = `You are a query rewriting assistant for semantic document retrieval.
 Your task: transform the user's conversational question into a precise retrieval query that will surface relevant technical documents.
@@ -10,7 +11,7 @@ Rules:
 - Expand abbreviations when helpful
 - Output ONLY the rewritten query text, no explanation, no quotes`;
 
-export async function rewriteQuery(
+async function _rewriteQuery(
   originalQuery: string,
   conversationContext?: string
 ): Promise<string> {
@@ -41,3 +42,9 @@ export async function rewriteQuery(
     return originalQuery;
   }
 }
+
+export const rewriteQuery = traceable(_rewriteQuery, {
+  name: "retrieval.query_rewrite",
+  run_type: "chain",
+  metadata: { layer: "retrieval" },
+});

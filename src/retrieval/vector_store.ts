@@ -3,6 +3,7 @@ import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import { embed } from "../utils/llm_client.js";
 import type { CorpusDocument } from "./corpus.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface RetrievedChunk {
   id: string;
@@ -20,6 +21,17 @@ export class VectorStore {
 
   constructor() {
     this.client = new ChromaClient({ path: config.CHROMA_URL });
+    // Wrap hot-path methods so they appear as child spans in LangSmith traces
+    this.query = traceable(this.query.bind(this), {
+      name: "vector_store.query",
+      run_type: "retriever",
+      metadata: { layer: "retrieval", store: "chromadb" },
+    });
+    this.queryMemory = traceable(this.queryMemory.bind(this), {
+      name: "vector_store.query_memory",
+      run_type: "retriever",
+      metadata: { layer: "memory", store: "chromadb" },
+    });
   }
 
   async initialize(): Promise<void> {
