@@ -16,7 +16,7 @@ const envSchema = z.object({
 
   // claude-3-haiku-20240307   — cheap tasks (rewrite, rerank, critic, memory)
   // claude-haiku-4-5-20251001 — strong tasks (final synthesis)
-  MODEL_CHEAP: z.string().default("claude-3-haiku-20240307"),
+  MODEL_CHEAP: z.string().default("claude-haiku-4-5-20251001"),
   MODEL_STRONG: z.string().default("claude-haiku-4-5-20251001"),
   MODEL_EMBED: z.string().default("openai/text-embedding-3-small"),
 
