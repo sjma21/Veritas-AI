@@ -11,7 +11,17 @@ import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 
 async function runEvaluation(): Promise<void> {
-  console.log("=== VeritasAI Evaluation Framework ===\n");
+  // Tier filter: EVAL_TIER_FILTER=1,2 runs only those tiers (used in CI to skip Tier 3 web search)
+  const tierFilter = config.EVAL_TIER_FILTER
+    ? new Set(config.EVAL_TIER_FILTER.split(",").map((t) => parseInt(t.trim(), 10)))
+    : null;
+
+  const questions = tierFilter
+    ? EVAL_DATASET.filter((q) => tierFilter.has(q.tier))
+    : EVAL_DATASET;
+
+  const tierLabel = tierFilter ? `Tiers ${[...tierFilter].join("+")}` : "All Tiers";
+  console.log(`=== VeritasAI Evaluation Framework === (${tierLabel}, ${questions.length} questions)\n`);
 
   const vectorStore = new VectorStore();
   await vectorStore.initialize();
@@ -23,7 +33,7 @@ async function runEvaluation(): Promise<void> {
   const tierCounts = { 1: { pass: 0, total: 0 }, 2: { pass: 0, total: 0 }, 3: { pass: 0, total: 0 } };
   let schemaValidCount = 0;
 
-  for (const question of EVAL_DATASET) {
+  for (const question of questions) {
     console.log(`\n[${question.id}] Tier ${question.tier}: ${question.question}`);
 
     const startTime = Date.now();
@@ -127,29 +137,62 @@ async function runEvaluation(): Promise<void> {
   const schemaValidity = (schemaValidCount / totalQuestions) * 100;
   const totalCost = results.reduce((s, r) => s + r.estimated_cost_usd, 0);
 
+  // Use config-driven thresholds so CI can tighten or relax them via env
+  const minTier1 = tierFilter && !tierFilter.has(1) ? 0 : config.EVAL_MIN_TIER1_PASS;
+  const minTier2 = tierFilter && !tierFilter.has(2) ? 0 : config.EVAL_MIN_TIER2_PASS;
+  const minTier3 = tierFilter && !tierFilter.has(3) ? 0 : config.EVAL_MIN_TIER3_PASS;
+
+  const tier1Pass = tierCounts[1].pass >= minTier1;
+  const tier2Pass = tierCounts[2].pass >= minTier2;
+  const tier3Pass = tierCounts[3].pass >= minTier3;
+  const schemaPass = schemaValidity >= config.EVAL_MIN_SCHEMA_PCT;
+  const overallPassed = tier1Pass && tier2Pass && tier3Pass && schemaPass;
+
+  const avgLatencyMs = results.length > 0
+    ? Math.round(results.reduce((s, r) => s + r.latency_ms, 0) / results.length)
+    : 0;
+  const avgCitationQuality = results.length > 0
+    ? results.reduce((s, r) => s + r.citation_quality, 0) / results.length
+    : 0;
+
   console.log("\n═══════════════════════════════════════════");
   console.log("EVALUATION SUMMARY");
   console.log("═══════════════════════════════════════════");
   console.log(`Total:           ${totalPass}/${totalQuestions} passed`);
-  console.log(`Tier 1:          ${tierCounts[1].pass}/${tierCounts[1].total} (target: 4/5)`);
-  console.log(`Tier 2:          ${tierCounts[2].pass}/${tierCounts[2].total} (target: 3/5)`);
-  console.log(`Tier 3:          ${tierCounts[3].pass}/${tierCounts[3].total} (target: 2/5)`);
-  console.log(`Schema validity: ${schemaValidity.toFixed(1)}% (target: ≥85%)`);
+  if (tierCounts[1].total > 0) console.log(`Tier 1:          ${tierCounts[1].pass}/${tierCounts[1].total} (min: ${minTier1})`);
+  if (tierCounts[2].total > 0) console.log(`Tier 2:          ${tierCounts[2].pass}/${tierCounts[2].total} (min: ${minTier2})`);
+  if (tierCounts[3].total > 0) console.log(`Tier 3:          ${tierCounts[3].pass}/${tierCounts[3].total} (min: ${minTier3})`);
+  console.log(`Schema validity: ${schemaValidity.toFixed(1)}% (min: ${config.EVAL_MIN_SCHEMA_PCT}%)`);
+  console.log(`Avg latency:     ${avgLatencyMs}ms`);
+  console.log(`Avg citation Q:  ${avgCitationQuality.toFixed(2)}/2`);
   console.log(`Total cost:      $${totalCost.toFixed(4)}`);
   console.log(`\nResults written to: ${csvPath}`);
 
-  const tier1Pass = tierCounts[1].pass >= 4;
-  const tier2Pass = tierCounts[2].pass >= 3;
-  const tier3Pass = tierCounts[3].pass >= 2;
-  const schemaPass = schemaValidity >= 85;
-
   console.log("\nThreshold checks:");
-  console.log(`  Tier 1 ≥4/5:    ${tier1Pass ? "✅" : "❌"}`);
-  console.log(`  Tier 2 ≥3/5:    ${tier2Pass ? "✅" : "❌"}`);
-  console.log(`  Tier 3 ≥2/5:    ${tier3Pass ? "✅" : "❌"}`);
-  console.log(`  Schema ≥85%:    ${schemaPass ? "✅" : "❌"}`);
+  if (tierCounts[1].total > 0) console.log(`  Tier 1 ≥${minTier1}/${tierCounts[1].total}: ${tier1Pass ? "✅" : "❌"}`);
+  if (tierCounts[2].total > 0) console.log(`  Tier 2 ≥${minTier2}/${tierCounts[2].total}: ${tier2Pass ? "✅" : "❌"}`);
+  if (tierCounts[3].total > 0) console.log(`  Tier 3 ≥${minTier3}/${tierCounts[3].total}: ${tier3Pass ? "✅" : "❌"}`);
+  console.log(`  Schema ≥${config.EVAL_MIN_SCHEMA_PCT}%:  ${schemaPass ? "✅" : "❌"}`);
+  console.log(`\nOverall: ${overallPassed ? "✅ PASSED" : "❌ FAILED — quality gate not met"}`);
 
-  process.exit(tier1Pass && tier2Pass && tier3Pass && schemaPass ? 0 : 1);
+  // Write metadata JSON for the CI summary script
+  const metaPath = path.join(process.cwd(), "eval_meta.json");
+  const fs = await import("fs/promises");
+  await fs.writeFile(metaPath, JSON.stringify({
+    passed: overallPassed,
+    totalPass, totalQuestions,
+    tierCounts,
+    schemaValidity,
+    avgLatencyMs,
+    avgCitationQuality,
+    totalCostUsd: totalCost,
+    tierFilter: config.EVAL_TIER_FILTER ?? "all",
+    thresholds: { minTier1, minTier2, minTier3, minSchemaPct: config.EVAL_MIN_SCHEMA_PCT },
+    timestamp: new Date().toISOString(),
+    commit: process.env.GITHUB_SHA ?? "local",
+  }, null, 2));
+
+  process.exit(overallPassed ? 0 : 1);
 }
 
 function scoreCitationQuality(citations: string[], expected: string[]): 0 | 1 | 2 {

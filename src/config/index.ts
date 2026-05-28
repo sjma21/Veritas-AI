@@ -41,6 +41,13 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.string().default("info"),
 
+  // Evaluation CI
+  EVAL_TIER_FILTER: z.string().optional(), // e.g. "1,2" to run only tiers 1 and 2
+  EVAL_MIN_TIER1_PASS: z.coerce.number().default(4),  // out of 5
+  EVAL_MIN_TIER2_PASS: z.coerce.number().default(3),  // out of 5
+  EVAL_MIN_TIER3_PASS: z.coerce.number().default(2),  // out of 5
+  EVAL_MIN_SCHEMA_PCT: z.coerce.number().default(85), // %
+
   // Guardrails
   GUARDRAILS_ENABLED: z.coerce.boolean().default(true),
   GUARDRAILS_PII_ENABLED: z.coerce.boolean().default(true),
