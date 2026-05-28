@@ -44,6 +44,7 @@ const envSchema = z.object({
   // Semantic cache
   SEMANTIC_CACHE_ENABLED: z.coerce.boolean().default(true),
   SEMANTIC_CACHE_THRESHOLD: z.coerce.number().default(0.92),
+  SEMANTIC_CACHE_MIN_CONFIDENCE: z.coerce.number().default(0.35),
   SEMANTIC_CACHE_TTL_SECONDS: z.coerce.number().default(3600),
   SEMANTIC_CACHE_COLLECTION: z.string().default("veritas_semantic_cache"),
 

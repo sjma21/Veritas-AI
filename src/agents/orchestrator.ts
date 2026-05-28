@@ -307,10 +307,13 @@ export class AgentOrchestrator {
         .storeExchange(sessionId, userMessage, parsedOutput.answer)
         .catch((err) => logger.warn({ err }, "Async memory store failed"));
 
-      // Only cache responses with decent confidence so low-quality answers don't poison the cache
-      if (this.semanticCache && parsedOutput.confidence >= 0.5) {
+      // Cache any response above the minimum confidence — even 0.35 is worth caching
+      // so repeated identical queries skip the pipeline rather than re-running and getting the same answer.
+      // Very low confidence ("I don't know") responses are excluded.
+      if (this.semanticCache && parsedOutput.confidence >= config.SEMANTIC_CACHE_MIN_CONFIDENCE) {
         this.semanticCache
           .store(userMessage, parsedOutput)
+          .then(() => logger.info({ confidence: parsedOutput.confidence }, "Response stored in semantic cache"))
           .catch((err) => logger.warn({ err }, "Async semantic cache store failed"));
       }
     });
