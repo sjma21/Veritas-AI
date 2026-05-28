@@ -41,6 +41,13 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.string().default("info"),
 
+  // Guardrails
+  GUARDRAILS_ENABLED: z.coerce.boolean().default(true),
+  GUARDRAILS_PII_ENABLED: z.coerce.boolean().default(true),
+  GUARDRAILS_INJECTION_ENABLED: z.coerce.boolean().default(true),
+  GUARDRAILS_CONTENT_ENABLED: z.coerce.boolean().default(true),
+  GUARDRAILS_INJECTION_THRESHOLD: z.coerce.number().default(0.7),
+
   // Image upload / vision ingestion
   UPLOAD_MAX_SIZE_MB: z.coerce.number().default(10),
 
