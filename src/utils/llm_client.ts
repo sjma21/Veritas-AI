@@ -4,6 +4,7 @@ import { config } from "../config/index.js";
 import { logger } from "./logger.js";
 import { estimateCost, estimateTokens } from "./token_counter.js";
 import { withRetry } from "./retry.js";
+import { traceable } from "../observability/langsmith.js";
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,7 @@ export interface CompletionResult {
 
 // ── Complete ──────────────────────────────────────────────────────────────────
 
-export async function complete(options: CompletionOptions): Promise<CompletionResult> {
+async function _complete(options: CompletionOptions): Promise<CompletionResult> {
   return withRetry(
     async () => {
       const resp = await anthropicClient.messages.create({
@@ -107,6 +108,22 @@ export async function complete(options: CompletionOptions): Promise<CompletionRe
   );
 }
 
+export const complete = traceable(_complete, {
+  name: "llm.complete",
+  run_type: "llm",
+  metadata: { provider: "anthropic" },
+  // surface model + token stats in the LangSmith run output
+  processOutputs: (out: CompletionResult) => ({
+    ...out,
+    // LangSmith looks for these keys when run_type === "llm"
+    generations: [[{ text: out.content }]],
+    llm_output: {
+      model_name: "see input options.model",
+      token_usage: { prompt_tokens: out.inputTokens, completion_tokens: out.outputTokens },
+    },
+  }),
+});
+
 // ── Stream ────────────────────────────────────────────────────────────────────
 
 export async function streamComplete(
@@ -145,7 +162,7 @@ export async function streamComplete(
 
 // ── Embed ─────────────────────────────────────────────────────────────────────
 
-export async function embed(texts: string[]): Promise<number[][]> {
+async function _embed(texts: string[]): Promise<number[][]> {
   return withRetry(
     async () => {
       const resp = await embedClient.embeddings.create({
@@ -158,3 +175,9 @@ export async function embed(texts: string[]): Promise<number[][]> {
     "llm-embed"
   );
 }
+
+export const embed = traceable(_embed, {
+  name: "llm.embed",
+  run_type: "embedding",
+  metadata: { provider: "openrouter" },
+});
