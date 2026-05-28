@@ -1,0 +1,108 @@
+name: Eval Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-flight runs on the same PR/branch to save costs
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Run Evals (Tier 1+2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      chromadb:
+        image: chromadb/chroma:latest
+        ports:
+          - 8000:8000
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8000/api/v2/heartbeat || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # LLM providers
+      ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENROUTER_API_KEY:   ${{ secrets.OPENROUTER_API_KEY }}
+      TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
+
+      # Services (match Docker service ports above)
+      CHROMA_URL:           http://localhost:8000
+      REDIS_URL:            redis://localhost:6379
+
+      # Models — use same Haiku for both to keep cost low in CI
+      MODEL_CHEAP:          claude-haiku-4-5-20251001
+      MODEL_STRONG:         claude-haiku-4-5-20251001
+      MODEL_EMBED:          openai/text-embedding-3-small
+
+      # Eval config — Tiers 1+2 only; Tier 3 uses live web search (non-deterministic)
+      EVAL_TIER_FILTER:     "1,2"
+      EVAL_MIN_TIER1_PASS:  "4"
+      EVAL_MIN_TIER2_PASS:  "3"
+      EVAL_MIN_SCHEMA_PCT:  "85"
+
+      # Disable optional features that aren't needed for eval
+      GUARDRAILS_ENABLED:        "false"
+      SEMANTIC_CACHE_ENABLED:    "false"
+      LANGSMITH_TRACING:         "false"
+
+      # Misc
+      NODE_ENV:             test
+      PORT:                 3000
+      LOG_LEVEL:            warn
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install pnpm
+        run: npm install -g pnpm@9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Seed corpus
+        run: pnpm run seed
+
+      - name: Run evaluation (Tier 1+2)
+        id: eval
+        run: pnpm run eval:ci
+
+      - name: Generate summary report
+        if: always()   # run even if eval failed so we always get a report
+        run: node scripts/eval_summary.mjs
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.sha }}
+          path: |
+            eval_results.csv
+            eval_meta.json
+            eval_report.md
+          retention-days: 30
