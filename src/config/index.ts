@@ -40,6 +40,11 @@ const envSchema = z.object({
   RATE_LIMIT_REQUESTS_PER_MINUTE: z.coerce.number().default(60),
 
   LOG_LEVEL: z.string().default("info"),
+
+  // LangSmith — optional observability
+  LANGSMITH_API_KEY: z.string().optional(),
+  LANGSMITH_PROJECT: z.string().default("veritas-ai"),
+  LANGSMITH_TRACING: z.string().default("true"),
 });
 
 const parsed = envSchema.safeParse(process.env);
