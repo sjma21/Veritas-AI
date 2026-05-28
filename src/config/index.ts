@@ -41,6 +41,9 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.string().default("info"),
 
+  // Image upload / vision ingestion
+  UPLOAD_MAX_SIZE_MB: z.coerce.number().default(10),
+
   // Semantic cache
   SEMANTIC_CACHE_ENABLED: z.coerce.boolean().default(true),
   SEMANTIC_CACHE_THRESHOLD: z.coerce.number().default(0.92),

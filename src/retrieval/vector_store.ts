@@ -80,6 +80,22 @@ export class VectorStore {
     }
   }
 
+  async addDocument(doc: CorpusDocument): Promise<void> {
+    if (!this.collection) throw new Error("VectorStore not initialized");
+
+    const text = `${doc.title}\n\n${doc.content}`;
+    const [embedding] = await embed([text]);
+
+    await this.collection.upsert({
+      ids: [doc.id],
+      embeddings: [embedding],
+      documents: [text],
+      metadatas: [{ ...doc.metadata, title: doc.title, source: doc.source }],
+    });
+
+    logger.info({ id: doc.id, title: doc.title }, "Document indexed in corpus");
+  }
+
   async query(queryText: string, topK = config.RETRIEVAL_TOP_K): Promise<RetrievedChunk[]> {
     if (!this.collection) throw new Error("VectorStore not initialized");
 
