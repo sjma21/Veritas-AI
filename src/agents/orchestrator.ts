@@ -17,6 +17,7 @@ import { logger } from "../utils/logger.js";
 import { estimateCost, truncateToTokenLimit } from "../utils/token_counter.js";
 import type { McpClient } from "../mcp/index.js";
 import { traceable } from "../observability/langsmith.js";
+import type { SemanticCache } from "../cache/semantic_cache.js";
 
 export interface AgentRunOptions {
   userMessage: string;
@@ -45,7 +46,8 @@ export class AgentOrchestrator {
   constructor(
     private vectorStore: VectorStore,
     private memoryManager: MemoryManager,
-    private mcpClient?: McpClient
+    private mcpClient?: McpClient,
+    private semanticCache?: SemanticCache
   ) {
     if (mcpClient) {
       for (const t of mcpClient.getToolDefinitions()) {
@@ -73,6 +75,23 @@ export class AgentOrchestrator {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
     let toolEvidence = "";
+
+    // ── Step 0: Semantic cache lookup ────────────────────────────────────────
+    if (this.semanticCache) {
+      const hit = await this.semanticCache.lookup(userMessage);
+      if (hit) {
+        emit({ type: "cache_hit", similarity: hit.similarity });
+        // Stream the cached answer tokens
+        const chunkSize = 15;
+        for (let i = 0; i < hit.output.answer.length; i += chunkSize) {
+          emit({ type: "token", content: hit.output.answer.slice(i, i + chunkSize) });
+          await new Promise<void>((r) => setTimeout(r, 8));
+        }
+        emit({ type: "final", output: hit.output });
+        emit({ type: "done" });
+        return { output: hit.output, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, iterationsUsed: 0 };
+      }
+    }
 
     // ── Step 1: Retrieve relevant memories ──────────────────────────────────
     emit({ type: "retrieval", message: "Retrieving relevant conversation history..." });
@@ -282,11 +301,18 @@ export class AgentOrchestrator {
     emit({ type: "final", output: parsedOutput });
     emit({ type: "done" });
 
-    // ── Step 9: Persist memory async ─────────────────────────────────────────
+    // ── Step 9: Persist memory + cache async ────────────────────────────────
     setImmediate(() => {
       this.memoryManager
         .storeExchange(sessionId, userMessage, parsedOutput.answer)
         .catch((err) => logger.warn({ err }, "Async memory store failed"));
+
+      // Only cache responses with decent confidence so low-quality answers don't poison the cache
+      if (this.semanticCache && parsedOutput.confidence >= 0.5) {
+        this.semanticCache
+          .store(userMessage, parsedOutput)
+          .catch((err) => logger.warn({ err }, "Async semantic cache store failed"));
+      }
     });
 
     const estimatedCostUsd = estimateCost(totalInputTokens, totalOutputTokens, config.MODEL_STRONG);
