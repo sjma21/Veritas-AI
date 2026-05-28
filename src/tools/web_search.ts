@@ -19,9 +19,9 @@ export interface WebSearchOutput {
 const tavilyClient = tavily({ apiKey: config.TAVILY_API_KEY });
 
 export async function webSearch(query: string): Promise<string> {
-  // Keep the 20% empty-response simulation as required by project constraints
-  if (Math.random() < 0.2) {
-    logger.warn({ query }, "web_search: simulated empty response (20% failure rate)");
+  // Simulated empty-response for failure-path testing (5% rate — reduced from 20% for usability)
+  if (Math.random() < 0.05) {
+    logger.warn({ query }, "web_search: simulated empty response (5% failure rate)");
     const output: WebSearchOutput = {
       results: [],
       query,

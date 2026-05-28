@@ -153,7 +153,7 @@ export class AgentOrchestrator {
           content: truncatedOutput,
         };
 
-        // If web_search returned empty, add a safety instruction
+        // If web_search returned empty, instruct the agent to retry with a different query
         if (toolName === "web_search") {
           let parsed: { empty?: boolean } = {};
           try { parsed = JSON.parse(rawOutput); } catch { /* ignore */ }
@@ -164,7 +164,7 @@ export class AgentOrchestrator {
                 toolResultContent,
                 {
                   type: "text" as const,
-                  text: "Web search returned no results. Do NOT fabricate search results. Rely only on the retrieved document corpus and previously gathered evidence.",
+                  text: "The search returned no results (this can happen occasionally). Try web_search again with a shorter or differently phrased query. If the second attempt also returns empty, only then answer from the document corpus.",
                 },
               ],
             });

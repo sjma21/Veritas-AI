@@ -129,9 +129,10 @@ export async function runCritic(
       };
     }
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
     logger.warn({ err }, "Critic LLM call failed — defaulting to pass with warning");
-    emit({ type: "critic", message: "Critic check skipped due to internal error.", passed: true });
-    return { passed: true, issues: ["Critic check was skipped due to an internal error."] };
+    emit({ type: "critic", message: `Critic skipped: ${errMsg}`, passed: true });
+    return { passed: true, issues: [`Critic skipped: ${errMsg}`] };
   }
 }
 
