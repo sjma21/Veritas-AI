@@ -109,11 +109,12 @@ jobs:
       - name: Generate summary report
         if: always()
         run: |
-          if [ -f scripts/eval_summary.mjs ]; then
-            node scripts/eval_summary.mjs
+          SUMMARY_SCRIPT="$GITHUB_WORKSPACE/scripts/eval_summary.mjs"
+          if [ -f "$SUMMARY_SCRIPT" ]; then
+            node "$SUMMARY_SCRIPT"
           else
-            echo "## ⚠️ Eval did not complete" >> $GITHUB_STEP_SUMMARY
-            echo "eval_summary.mjs not found — likely a setup failure before checkout." >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ Eval did not complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "Setup failed before eval could run. Check the logs above." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload eval artifacts
