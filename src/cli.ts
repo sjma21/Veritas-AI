@@ -1,4 +1,6 @@
 import * as readline from "readline";
+import * as fs from "fs";
+import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 
 // ── ANSI colour helpers ───────────────────────────────────────────────────────
@@ -133,13 +135,68 @@ function renderEvent(event: Record<string, unknown>, inTokenStream: boolean): bo
 }
 
 // ── Banner ────────────────────────────────────────────────────────────────────
+async function handleUpload(filePath: string): Promise<void> {
+  const resolved = path.resolve(filePath);
+
+  if (!fs.existsSync(resolved)) {
+    console.log(paint(c.red, `\n  File not found: ${resolved}\n`));
+    return;
+  }
+
+  const ext = path.extname(resolved).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+  };
+  const mimeType = mimeMap[ext];
+  if (!mimeType) {
+    console.log(paint(c.red, `\n  Unsupported file type: ${ext}. Use .jpg .png .gif .webp\n`));
+    return;
+  }
+
+  const filename = path.basename(resolved);
+  console.log(paint(c.dim, `\n  Uploading ${filename}...\n`));
+
+  try {
+    const fileBuffer = fs.readFileSync(resolved);
+    const formData = new FormData();
+    formData.append("image", new Blob([fileBuffer], { type: mimeType }), filename);
+
+    process.stdout.write(paint(c.magenta, "  ⬆  ") + paint(c.dim, "Extracting text via vision model..."));
+
+    const res = await fetch(`${SERVER_URL}/upload`, { method: "POST", body: formData });
+    const json = await res.json() as Record<string, unknown>;
+
+    process.stdout.write("\r\x1b[K"); // clear the spinner line
+
+    if (!res.ok) {
+      console.log(paint(c.red, `\n  Upload failed: ${json.error}\n`));
+      return;
+    }
+
+    console.log(paint(c.bold + c.magenta, `  ✔ Indexed: "${json.title}"`));
+    console.log(paint(c.dim, `  ID:      ${json.id}`));
+    console.log(paint(c.dim, `  Words:   ${json.word_count}`));
+    if (json.summary) {
+      console.log(paint(c.dim, `  Summary: ${String(json.summary).slice(0, 120)}…`));
+    }
+    console.log(paint(c.dim, `  Time:    ${json.latency_ms}ms\n`));
+    console.log(paint(c.dim, `  You can now ask questions about this document.\n`));
+  } catch (err) {
+    console.log(paint(c.red, `\n  Upload error: ${err instanceof Error ? err.message : String(err)}\n`));
+  }
+}
+
 function printBanner(): void {
   console.log();
   console.log(paint(c.bold + c.cyan, "  ╔══════════════════════════════════╗"));
   console.log(paint(c.bold + c.cyan, "  ║         V E R I T A S  A I       ║"));
   console.log(paint(c.bold + c.cyan, "  ╚══════════════════════════════════╝"));
   console.log(paint(c.dim, `  Server: ${SERVER_URL}`));
-  console.log(paint(c.dim, "  Commands: /exit  /session  /clear\n"));
+  console.log(paint(c.dim, "  Commands: /exit  /session  /clear  /upload <path>\n"));
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -186,6 +243,13 @@ async function main(): Promise<void> {
     if (input === "/clear") {
       process.stdout.write("\x1b[2J\x1b[H");
       printBanner();
+      rl.prompt();
+      return;
+    }
+
+    if (input.startsWith("/upload ")) {
+      const filePath = input.slice(8).trim();
+      await handleUpload(filePath);
       rl.prompt();
       return;
     }
