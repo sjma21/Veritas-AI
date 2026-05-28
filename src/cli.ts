@@ -12,6 +12,7 @@ const c = {
   red: "\x1b[31m",
   white: "\x1b[37m",
   blue: "\x1b[34m",
+  magenta: "\x1b[35m",
 };
 
 const paint = (color: string, text: string) => `${color}${text}${c.reset}`;
@@ -51,6 +52,14 @@ async function* readSSE(response: Response): AsyncGenerator<Record<string, unkno
 // ── Render a single stream event to stdout ────────────────────────────────────
 function renderEvent(event: Record<string, unknown>, inTokenStream: boolean): boolean {
   switch (event.type as string) {
+    case "cache_hit": {
+      const pct = ((event.similarity as number) * 100).toFixed(1);
+      process.stdout.write(
+        `\n  ${paint(c.bold + c.magenta, "⚡ Semantic cache hit")}  ${paint(c.dim, `(${pct}% match — full pipeline skipped)`)}\n\n`
+      );
+      return false;
+    }
+
     case "retrieval":
       process.stdout.write(paint(c.dim, `  ↳ ${event.message}\n`));
       return false;

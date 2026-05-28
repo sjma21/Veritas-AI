@@ -9,6 +9,8 @@ import { createHealthRouter } from "./routes/health.js";
 import { chatRateLimit, evalRateLimit } from "./middleware/rate_limiter.js";
 import { closeRedis } from "../cache/redis_client.js";
 import { createInProcessMcpClient, type McpClient } from "../mcp/index.js";
+import { SemanticCache } from "../cache/semantic_cache.js";
+import { ChromaClient } from "chromadb";
 
 export async function createServer(): Promise<{
   app: express.Express;
@@ -52,6 +54,9 @@ export async function createServer(): Promise<{
   await vectorStore.initialize();
   const memoryManager = new MemoryManager(vectorStore);
 
+  const semanticCache = new SemanticCache(new ChromaClient({ path: config.CHROMA_URL }));
+  await semanticCache.initialize();
+
   let mcpClient: McpClient | undefined;
   try {
     mcpClient = await createInProcessMcpClient(vectorStore);
@@ -64,8 +69,8 @@ export async function createServer(): Promise<{
 
   // Routes
   app.use("/health", createHealthRouter());
-  app.use("/chat", chatRateLimit, createChatRouter(vectorStore, memoryManager, mcpClient));
-  app.use("/eval", evalRateLimit, createEvalRouter(vectorStore, memoryManager, mcpClient));
+  app.use("/chat", chatRateLimit, createChatRouter(vectorStore, memoryManager, mcpClient, semanticCache));
+  app.use("/eval", evalRateLimit, createEvalRouter(vectorStore, memoryManager, mcpClient, semanticCache));
 
   // 404
   app.use((_req, res) => {

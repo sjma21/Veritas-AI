@@ -7,6 +7,7 @@ import { MemoryManager } from "../../memory/memory_manager.js";
 import { AgentOutputSchema, type EvalResult, type StreamEvent } from "../../schemas/output.js";
 import { logger } from "../../utils/logger.js";
 import type { McpClient } from "../../mcp/index.js";
+import type { SemanticCache } from "../../cache/semantic_cache.js";
 
 function scoreCitationQuality(citations: string[], expected: string[]): 0 | 1 | 2 {
   if (expected.length === 0) return 2;
@@ -20,10 +21,11 @@ function scoreCitationQuality(citations: string[], expected: string[]): 0 | 1 | 
 export function createEvalRouter(
   vectorStore: VectorStore,
   memoryManager: MemoryManager,
-  mcpClient?: McpClient
+  mcpClient?: McpClient,
+  semanticCache?: SemanticCache
 ): Router {
   const router = Router();
-  const orchestrator = new AgentOrchestrator(vectorStore, memoryManager, mcpClient);
+  const orchestrator = new AgentOrchestrator(vectorStore, memoryManager, mcpClient, semanticCache);
 
   router.post("/run", async (req: Request, res: Response): Promise<void> => {
     const tierFilter = req.body?.tier as number | undefined;

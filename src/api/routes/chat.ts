@@ -8,14 +8,16 @@ import { initSSE, sendSSEEvent, sendSSEDone } from "../../streaming/sse.js";
 import { cacheManager } from "../../cache/cache_manager.js";
 import { logger } from "../../utils/logger.js";
 import type { McpClient } from "../../mcp/index.js";
+import type { SemanticCache } from "../../cache/semantic_cache.js";
 
 export function createChatRouter(
   vectorStore: VectorStore,
   memoryManager: MemoryManager,
-  mcpClient?: McpClient
+  mcpClient?: McpClient,
+  semanticCache?: SemanticCache
 ): Router {
   const router = Router();
-  const orchestrator = new AgentOrchestrator(vectorStore, memoryManager, mcpClient);
+  const orchestrator = new AgentOrchestrator(vectorStore, memoryManager, mcpClient, semanticCache);
 
   router.post("/", async (req: Request, res: Response): Promise<void> => {
     const parseResult = ChatRequestSchema.safeParse(req.body);
