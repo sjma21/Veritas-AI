@@ -86,7 +86,7 @@ export async function runCritic(
     };
 
     try {
-      verdict = JSON.parse(result.content);
+      verdict = extractJson(result.content);
     } catch {
       logger.warn("Critic produced invalid JSON, defaulting to pass");
       verdict = { passed: true, issues: [] };
@@ -133,4 +133,18 @@ export async function runCritic(
     emit({ type: "critic", message: "Critic check skipped due to internal error.", passed: true });
     return { passed: true, issues: ["Critic check was skipped due to an internal error."] };
   }
+}
+
+function extractJson(text: string): {
+  passed: boolean;
+  issues: string[];
+  confidence_adjustment?: number;
+  suggested_answer_revision?: string | null;
+} {
+  // Strip markdown code fences if present
+  const stripped = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  try { return JSON.parse(stripped); } catch { /* fall through */ }
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) return JSON.parse(match[0]);
+  throw new Error("No JSON found in critic response");
 }
