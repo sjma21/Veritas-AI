@@ -163,9 +163,9 @@ export class AgentOrchestrator {
               content: [
                 toolResultContent,
                 {
-                  type: "text",
-                  content: "Web search returned no results. Do NOT fabricate search results. Rely only on the retrieved document corpus and previously gathered evidence.",
-                } as unknown as Anthropic.ToolResultBlockParam,
+                  type: "text" as const,
+                  text: "Web search returned no results. Do NOT fabricate search results. Rely only on the retrieved document corpus and previously gathered evidence.",
+                },
               ],
             });
             continue;
