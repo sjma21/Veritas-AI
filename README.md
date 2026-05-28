@@ -1,6 +1,6 @@
 # VeritasAI
 
-A production-style multi-turn AI agent system with retrieval-augmented generation, tool use, conversational memory, streaming, citation verification, and an evaluation framework.
+A production-style multi-turn AI agent system with RAG, ReAct tool use, conversational memory, SSE streaming, citation verification, semantic caching, MCP integration, LangSmith observability, input/output guardrails, and image ingestion.
 
 ---
 
@@ -8,31 +8,37 @@ A production-style multi-turn AI agent system with retrieval-augmented generatio
 
 ```
 src/
-├── agents/          orchestrator.ts          ReAct agent loop (max 5 iterations)
-├── tools/           web_search, calculator,  Tool registry + execution
-│                    summarise_doc
+├── agents/          orchestrator.ts          ReAct loop (max 5 iterations)
+├── tools/           web_search (Tavily)       Tool registry + execution
+│                    calculator, summarise_doc
 ├── retrieval/       corpus.ts                25-document corpus (2 contradictory docs)
-│                    vector_store.ts          ChromaDB wrapper
-│                    query_rewriter.ts        Cheap-model query rewriting
+│                    vector_store.ts          ChromaDB v2 wrapper
+│                    query_rewriter.ts        LLM query expansion
 │                    reranker.ts              LLM cross-encoder reranking
 │                    pipeline.ts              Full retrieval pipeline
 ├── memory/          memory_manager.ts        Retrieval-based conversational memory
-├── prompts/         templates.ts             System prompt + context builders
-├── critic/          critic.ts                Citation + evidence verification layer
-├── schemas/         output.ts                Zod schemas for all I/O
-├── streaming/       sse.ts                   SSE token streaming
+├── critic/          critic.ts                Two-phase citation + evidence verifier
+├── guardrails/      pii_redactor.ts          Regex PII detection + redaction
+│                    injection_detector.ts    Two-stage prompt injection detection
+│                    content_moderator.ts     LLM-based content moderation
+│                    index.ts                 Input + output guardrail pipeline
+├── cache/           redis_client.ts          Redis conversation history (TTL)
+│                    semantic_cache.ts        Near-duplicate query cache (ChromaDB)
+├── mcp/             corpus_server.ts         MCP server exposing corpus as tools
+│                    index.ts                 In-process MCP client (InMemoryTransport)
+│                    standalone.ts            Stdio MCP server for Claude Desktop
+├── ingestion/       vision_extractor.ts      Claude vision → text extraction
+├── observability/   langsmith.ts             LangSmith tracing setup
 ├── evaluation/      dataset.ts               15-question golden dataset (3 tiers)
-│                    runner.ts                CLI evaluation runner → CSV
-├── cache/           redis_client.ts          Redis singleton
-│                    cache_manager.ts         TTL cache wrapper
-├── utils/           logger.ts, retry.ts,     Shared utilities
-│                    llm_client.ts,
-│                    token_counter.ts
+│                    runner.ts                Eval runner → CSV + eval_meta.json
+├── schemas/         output.ts                Zod schemas for all I/O
+├── streaming/       sse.ts                   SSE token streaming helpers
+├── prompts/         templates.ts             System prompt + context builders
 ├── api/
-│   ├── routes/      chat.ts, eval.ts,        Express route handlers
-│   │                health.ts
+│   ├── routes/      chat.ts, eval.ts         Express route handlers
+│   │                health.ts, upload.ts
 │   └── middleware/  rate_limiter.ts
-├── config/          index.ts                 Env-validated config
+├── config/          index.ts                 Zod-validated env config
 └── index.ts                                  Entry point
 ```
 
@@ -42,10 +48,12 @@ src/
 
 ### Prerequisites
 
-- Node.js ≥ 20
+- Node.js 22
 - pnpm (`npm install -g pnpm`)
 - Docker + Docker Compose
-- OpenRouter API key → [openrouter.ai](https://openrouter.ai)
+- Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+- OpenRouter API key ([openrouter.ai](https://openrouter.ai)) — embeddings only
+- Tavily API key ([tavily.com](https://tavily.com)) — web search
 
 ### 1. Install dependencies
 
@@ -57,7 +65,7 @@ pnpm install
 
 ```bash
 cp .env.example .env
-# Edit .env and set OPENROUTER_API_KEY
+# Fill in ANTHROPIC_API_KEY, OPENROUTER_API_KEY, TAVILY_API_KEY
 ```
 
 ### 3. Start infrastructure
@@ -72,16 +80,25 @@ docker compose up redis chromadb -d
 pnpm seed
 ```
 
-This indexes 25 documents into ChromaDB, including two intentionally contradictory documents about Redis memory limits (doc-012 and doc-013).
+Indexes 25 documents into ChromaDB, including two intentionally contradictory documents (doc-012 vs doc-013) about Redis memory limits.
 
-### 5. Start the server
+### 5. Start the server + CLI
 
 ```bash
-pnpm dev          # development (hot reload)
-pnpm start        # production (after pnpm build)
+pnpm dev          # terminal 1 — hot-reload server
+pnpm chat         # terminal 2 — interactive CLI
 ```
 
-Server starts on `http://localhost:3000`.
+---
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `/exit` | Quit |
+| `/session` | Show current session ID |
+| `/clear` | Clear screen |
+| `/upload <path>` | Upload an image — extracts text via Claude vision and indexes it |
 
 ---
 
@@ -89,72 +106,35 @@ Server starts on `http://localhost:3000`.
 
 ### `POST /chat`
 
-Stream or non-stream conversational queries.
-
 ```bash
-# Streaming (SSE)
 curl -X POST http://localhost:3000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "What does the corpus say about Redis memory limits?", "stream": true}'
-
-# Non-streaming JSON
-curl -X POST http://localhost:3000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Explain the ReAct agent pattern.", "stream": false, "session_id": "550e8400-e29b-41d4-a716-446655440000"}'
-```
-
-**Request body:**
-| Field | Type | Description |
-|---|---|---|
-| `message` | string | User's question (max 4000 chars) |
-| `session_id` | UUID (optional) | Session for memory continuity |
-| `stream` | boolean (default: true) | SSE streaming or JSON response |
-
-**Response (non-stream):**
-```json
-{
-  "session_id": "uuid",
-  "output": {
-    "answer": "...",
-    "citations": ["doc-012", "doc-013"],
-    "confidence": 0.82,
-    "follow_up_questions": ["...", "..."]
-  },
-  "meta": {
-    "iterations": 1,
-    "input_tokens": 1240,
-    "output_tokens": 380,
-    "estimated_cost_usd": 0.0018
-  }
-}
+  -d '{"message": "What are the Redis memory limits?", "stream": true}'
 ```
 
 **SSE stream events:**
 ```
-data: {"type":"retrieval","message":"Rewriting query..."}
-data: {"type":"retrieval","message":"Retrieved 10 candidate chunks..."}
-data: {"type":"tool_call","tool":"calculator","input":{"expression":"2^16"}}
-data: {"type":"tool_result","tool":"calculator","output":"{\"result\":\"65536\"}"}
-data: {"type":"critic","message":"Critic PASSED","passed":true}
-data: {"type":"token","content":"Based on the"}
-data: {"type":"final","output":{...}}
+{"type":"cache_hit","similarity":0.97}            ← semantic cache hit
+{"type":"guardrail","check":"pii","action":"redacted","detail":"Redacted: email"}
+{"type":"retrieval","message":"Rewriting query..."}
+{"type":"tool_call","tool":"web_search","input":{...}}
+{"type":"tool_result","tool":"web_search","output":"{...}"}
+{"type":"critic","message":"Critic PASSED","passed":true}
+{"type":"token","content":"Based on the"}
+{"type":"final","output":{...}}
 data: [DONE]
 ```
 
-### `POST /eval/run`
+### `POST /upload`
 
-Run the evaluation suite.
+Upload an image — text is extracted via Claude vision and indexed in the corpus.
 
 ```bash
-curl -X POST http://localhost:3000/eval/run \
-  -H "Content-Type: application/json" \
-  -d '{}'
-
-# Run only tier 1 questions
-curl -X POST http://localhost:3000/eval/run \
-  -H "Content-Type: application/json" \
-  -d '{"tier": 1}'
+curl -X POST http://localhost:3000/upload \
+  -F "image=@/path/to/diagram.png"
 ```
+
+Supported formats: JPEG, PNG, GIF, WebP (max 10MB).
 
 ### `GET /health`
 
@@ -162,92 +142,124 @@ curl -X POST http://localhost:3000/eval/run \
 curl http://localhost:3000/health
 ```
 
+### `npm run mcp`
+
+Starts a standalone MCP server on stdio for Claude Desktop integration.
+
+```json
+{
+  "mcpServers": {
+    "veritas-corpus": {
+      "command": "node",
+      "args": ["/path/to/VeritasAI/dist/mcp/standalone.js"],
+      "env": { "CHROMA_URL": "http://localhost:8000" }
+    }
+  }
+}
+```
+
 ---
 
-## CLI Evaluation Runner
+## Models
 
-Runs all 15 evaluation questions and writes results to `eval_results.csv`:
+| Task | Model | Why |
+|------|-------|-----|
+| Query rewrite, rerank, critic, memory | `claude-haiku-4-5-20251001` | Cheap structured tasks |
+| Final synthesis + ReAct tool use | `claude-haiku-4-5-20251001` | Reasoning + tool calls |
+| Embeddings | `text-embedding-3-small` via OpenRouter | Anthropic has no embeddings API |
+
+---
+
+## Evaluation
 
 ```bash
-pnpm eval
+pnpm eval        # all 15 questions → eval_results.csv
+pnpm eval:ci     # Tier 1+2 only (used in CI, skips non-deterministic web search)
 ```
 
-**Evaluation tiers:**
-- **Tier 1 (5 questions):** Corpus-only — target ≥4/5
-- **Tier 2 (5 questions):** Requires tool use (calculator/web_search) — target ≥3/5
-- **Tier 3 (5 questions):** Retrieval + tools + memory — target ≥2/5
-- **Schema validity:** Target ≥85%
+**Tiers:**
+- **Tier 1 (5q):** Corpus-only questions — gate: ≥4/5
+- **Tier 2 (5q):** Requires tool use (calculator/web_search) — gate: ≥3/5
+- **Tier 3 (5q):** Retrieval + tools + memory — gate: ≥2/5
+- **Schema validity:** Gate: ≥85%
 
-**CSV columns:** `question, expected_tier, pass, citation_quality, schema_valid, latency_ms, input_tokens, output_tokens, estimated_cost_usd, answer_preview, error`
-
----
-
-## Docker (Full Stack)
-
+Generate a Markdown report from last run:
 ```bash
-docker compose up --build
-```
-
-Services: `app` (port 3000), `redis` (port 6379), `chromadb` (port 8000).
-
-After startup, seed the corpus:
-```bash
-docker compose exec app node dist/retrieval/corpus.js seed
+node scripts/eval_summary.mjs
 ```
 
 ---
 
-## Key Design Decisions
+## CI / Quality Gate
 
-### Cost-Aware Model Routing
-- **`MODEL_CHEAP`** (default: `openai/gpt-4o-mini`): query rewriting, critic checks, reranking, memory summaries
-- **`MODEL_STRONG`** (default: `openai/gpt-4o`): final synthesis
+Every PR to `main` triggers `.github/workflows/eval-ci.yml`:
 
-Target cost per query: ≤$0.10.
+1. Starts ChromaDB + Redis as Docker services
+2. Seeds corpus
+3. Runs `pnpm eval:ci` (Tier 1+2, ~10 questions)
+4. Fails the PR if any threshold is not met
+5. Posts a quality report table to the GitHub Actions Step Summary
+6. Uploads `eval_results.csv` + `eval_meta.json` as artifacts (30 days)
 
-### Retrieval Pipeline
-```
-user query → rewrite (cheap model) → embed → ChromaDB vector search (top-10)
-           → LLM rerank (cheap model, top-5) → confidence score → contradiction detection
-```
-
-If confidence < `RETRIEVAL_CONFIDENCE_THRESHOLD` (default 0.45) and no results, returns explicit "I don't know" instead of hallucinating.
-
-### Contradictions
-Documents doc-012 and doc-013 contain conflicting information about Redis memory limits (512MB default vs. no fixed limit). The system detects and surfaces this contradiction explicitly.
-
-### Critic Layer
-Every response goes through a two-phase critic:
-1. **Local check:** All cited document IDs must exist in retrieved chunks
-2. **LLM check:** Evidence must support claims; confidence must be calibrated
-
-On failure: citations are removed, confidence is capped at 0.5, or the answer is revised.
-
-### Memory System
-- Exchanges are embedded and stored in ChromaDB (separate collection)
-- Top-3 relevant past exchanges retrieved per query
-- Injected: below system prompt, above retrieved document chunks
-- Stored async after response delivery
-
-### web_search Failure Handling
-20% of web_search calls return empty results (simulated). The system injects a system message forbidding fabrication and continues with corpus-only evidence.
+**Required GitHub Secrets:** `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `TAVILY_API_KEY`
 
 ---
 
-## Environment Variables
+## Guardrails
+
+Applied on every `/chat` request — input before the orchestrator, output before streaming.
+
+| Check | Layer | Method | On trigger |
+|-------|-------|--------|------------|
+| PII redaction | input + output | Regex (email, phone, SSN, card, IP, API keys) | Redact → continue |
+| Injection detection | input | Regex + LLM scorer | Block if score ≥ 0.7 |
+| Content moderation | input + output | LLM classifier | Block input / replace output |
+
+Toggle per-check with `GUARDRAILS_PII_ENABLED`, `GUARDRAILS_INJECTION_ENABLED`, `GUARDRAILS_CONTENT_ENABLED`.
+
+---
+
+## Semantic Cache
+
+Near-identical queries skip the full pipeline:
+
+- **Lookup:** embed query → cosine search → return cached `AgentOutput` if similarity ≥ `SEMANTIC_CACHE_THRESHOLD` (0.92) and within TTL
+- **Store:** cached after successful response with confidence ≥ `SEMANTIC_CACHE_MIN_CONFIDENCE` (0.35)
+- CLI shows: `⚡ Semantic cache hit (97.3% match — full pipeline skipped)`
+
+---
+
+## LangSmith Tracing
+
+Set `LANGSMITH_API_KEY` + `LANGSMITH_TRACING=true` to see per-layer traces:
+
+```
+agent.run
+  ├── semantic_cache.lookup
+  ├── memory.retrieve_relevant
+  ├── retrieval.pipeline
+  │     ├── retrieval.query_rewrite → llm.complete
+  │     ├── vector_store.query      → llm.embed
+  │     └── retrieval.rerank        → llm.complete ×5
+  ├── llm.complete  (ReAct synthesis)
+  ├── tool.web_search / tool.calculator / mcp.call_tool
+  ├── critic.verify → llm.complete
+  └── memory.store_exchange
+```
+
+---
+
+## Key Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | required | OpenRouter API key |
-| `MODEL_CHEAP` | `openai/gpt-4o-mini` | Model for cheap tasks |
-| `MODEL_STRONG` | `openai/gpt-4o` | Model for final synthesis |
-| `MODEL_EMBED` | `openai/text-embedding-3-small` | Embedding model |
-| `REDIS_URL` | `redis://localhost:6379` | Redis connection |
-| `CHROMA_URL` | `http://localhost:8000` | ChromaDB URL |
+| `ANTHROPIC_API_KEY` | required | All LLM completions |
+| `OPENROUTER_API_KEY` | required | Embeddings only |
+| `TAVILY_API_KEY` | required | Real web search |
+| `MODEL_CHEAP` | `claude-haiku-4-5-20251001` | Cheap tasks |
+| `MODEL_STRONG` | `claude-haiku-4-5-20251001` | Synthesis + tools |
 | `RETRIEVAL_CONFIDENCE_THRESHOLD` | `0.45` | Below this → "I don't know" |
-| `RETRIEVAL_TOP_K` | `10` | Vector search candidates |
-| `RERANK_TOP_K` | `5` | Final chunks after reranking |
-| `AGENT_MAX_ITERATIONS` | `5` | Max ReAct loop iterations |
-| `TOOL_OUTPUT_MAX_TOKENS` | `500` | Tool output truncation limit |
-| `RATE_LIMIT_REQUESTS_PER_MINUTE` | `60` | Chat rate limit (prod only) |
-| `PORT` | `3000` | HTTP server port |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Similarity gate for cache hit |
+| `GUARDRAILS_INJECTION_THRESHOLD` | `0.7` | Injection block threshold |
+| `EVAL_TIER_FILTER` | (all) | e.g. `1,2` to run only those tiers |
+| `LANGSMITH_API_KEY` | optional | Enable tracing |
