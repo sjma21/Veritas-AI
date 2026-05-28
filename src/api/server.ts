@@ -8,6 +8,7 @@ import { createEvalRouter } from "./routes/eval.js";
 import { createHealthRouter } from "./routes/health.js";
 import { chatRateLimit, evalRateLimit } from "./middleware/rate_limiter.js";
 import { closeRedis } from "../cache/redis_client.js";
+import { createInProcessMcpClient, type McpClient } from "../mcp/index.js";
 
 export async function createServer(): Promise<{
   app: express.Express;
@@ -50,12 +51,21 @@ export async function createServer(): Promise<{
   const vectorStore = new VectorStore();
   await vectorStore.initialize();
   const memoryManager = new MemoryManager(vectorStore);
+
+  let mcpClient: McpClient | undefined;
+  try {
+    mcpClient = await createInProcessMcpClient(vectorStore);
+    logger.info("MCP corpus server connected in-process");
+  } catch (err) {
+    logger.warn({ err }, "MCP client failed to start — agent will run without MCP tools");
+  }
+
   logger.info("Services initialized");
 
   // Routes
   app.use("/health", createHealthRouter());
-  app.use("/chat", chatRateLimit, createChatRouter(vectorStore, memoryManager));
-  app.use("/eval", evalRateLimit, createEvalRouter(vectorStore, memoryManager));
+  app.use("/chat", chatRateLimit, createChatRouter(vectorStore, memoryManager, mcpClient));
+  app.use("/eval", evalRateLimit, createEvalRouter(vectorStore, memoryManager, mcpClient));
 
   // 404
   app.use((_req, res) => {
@@ -81,6 +91,7 @@ export async function createServer(): Promise<{
       });
     },
     stop: async () => {
+      await mcpClient?.close();
       await closeRedis();
       logger.info("Server stopped gracefully");
     },
