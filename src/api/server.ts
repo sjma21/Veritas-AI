@@ -6,6 +6,7 @@ import { MemoryManager } from "../memory/memory_manager.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createEvalRouter } from "./routes/eval.js";
 import { createHealthRouter } from "./routes/health.js";
+import { createUploadRouter } from "./routes/upload.js";
 import { chatRateLimit, evalRateLimit } from "./middleware/rate_limiter.js";
 import { closeRedis } from "../cache/redis_client.js";
 import { createInProcessMcpClient, type McpClient } from "../mcp/index.js";
@@ -69,6 +70,7 @@ export async function createServer(): Promise<{
 
   // Routes
   app.use("/health", createHealthRouter());
+  app.use("/upload", createUploadRouter(vectorStore));
   app.use("/chat", chatRateLimit, createChatRouter(vectorStore, memoryManager, mcpClient, semanticCache));
   app.use("/eval", evalRateLimit, createEvalRouter(vectorStore, memoryManager, mcpClient, semanticCache));
 
