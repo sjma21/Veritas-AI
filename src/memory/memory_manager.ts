@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { VectorStore } from "../retrieval/vector_store.js";
 import { logger } from "../utils/logger.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface MemoryEntry {
   id: string;
@@ -12,7 +13,18 @@ export interface MemoryEntry {
 }
 
 export class MemoryManager {
-  constructor(private vectorStore: VectorStore) {}
+  constructor(private vectorStore: VectorStore) {
+    this.storeExchange = traceable(this.storeExchange.bind(this), {
+      name: "memory.store_exchange",
+      run_type: "chain",
+      metadata: { layer: "memory" },
+    });
+    this.retrieveRelevant = traceable(this.retrieveRelevant.bind(this), {
+      name: "memory.retrieve_relevant",
+      run_type: "retriever",
+      metadata: { layer: "memory" },
+    });
+  }
 
   /**
    * Persist a conversation exchange as a memory entry.

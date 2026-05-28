@@ -3,6 +3,7 @@ import { config } from "../config/index.js";
 import { logger } from "../utils/logger.js";
 import type { AgentOutput } from "../schemas/output.js";
 import type { RetrievedChunk } from "../retrieval/vector_store.js";
+import { traceable } from "../observability/langsmith.js";
 
 export interface CriticVerdict {
   passed: boolean;
@@ -27,7 +28,7 @@ Output ONLY valid JSON:
   "suggested_answer_revision": "Optional revised answer if needed (null if passed)"
 }`;
 
-export async function runCritic(
+async function _runCritic(
   answer: AgentOutput,
   retrievedChunks: RetrievedChunk[],
   toolEvidence: string,
@@ -135,6 +136,18 @@ export async function runCritic(
     return { passed: true, issues: [`Critic skipped: ${errMsg}`] };
   }
 }
+
+export const runCritic = traceable(_runCritic, {
+  name: "critic.verify",
+  run_type: "chain",
+  metadata: { layer: "critic" },
+  processOutputs: (out: CriticVerdict) => ({
+    passed: out.passed,
+    issueCount: out.issues.length,
+    issues: out.issues,
+    revised: !!out.revisedAnswer,
+  }),
+});
 
 function extractJson(text: string): {
   passed: boolean;
