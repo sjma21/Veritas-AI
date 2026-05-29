@@ -18,15 +18,18 @@ jobs:
     timeout-minutes: 20
 
     services:
+      # Use a trivial healthcheck so GitHub Actions marks the container as
+      # ready immediately without quoting-fragile commands. Real readiness
+      # is verified by the "Wait for ChromaDB" curl polling step below.
       chromadb:
         image: chromadb/chroma:latest
         ports:
           - 8000:8000
         options: >-
-          --health-cmd "wget -qO- http://localhost:8000/api/v2/heartbeat || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "true"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 3
 
       redis:
         image: redis:7-alpine
@@ -36,7 +39,7 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
     env:
       # LLM providers
@@ -59,7 +62,7 @@ jobs:
       EVAL_MIN_TIER2_PASS:  "3"
       EVAL_MIN_SCHEMA_PCT:  "85"
 
-      # Disable optional features that aren't needed for eval
+      # Disable features not needed for eval (saves time + cost)
       GUARDRAILS_ENABLED:        "false"
       SEMANTIC_CACHE_ENABLED:    "false"
       LANGSMITH_TRACING:         "false"
@@ -77,13 +80,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
 
-      - name: Install pnpm
-        run: npm install -g pnpm@9
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Wait for ChromaDB
+        # Poll from the host using curl (ubuntu-latest always has it).
+        # Retries for up to 60s — ChromaDB is Python-based and can be slow to start.
+        run: |
+          echo "Waiting for ChromaDB at http://localhost:8000/api/v2/heartbeat..."
+          for i in $(seq 1 12); do
+            if curl -sf http://localhost:8000/api/v2/heartbeat > /dev/null 2>&1; then
+              echo "ChromaDB is ready (attempt $i)"
+              exit 0
+            fi
+            echo "Not ready yet — attempt $i/12, retrying in 5s..."
+            sleep 5
+          done
+          echo "ChromaDB did not become ready in time"
+          exit 1
 
       - name: Seed corpus
         run: pnpm run seed
@@ -93,8 +113,15 @@ jobs:
         run: pnpm run eval:ci
 
       - name: Generate summary report
-        if: always()   # run even if eval failed so we always get a report
-        run: node scripts/eval_summary.mjs
+        if: always()
+        run: |
+          SUMMARY_SCRIPT="$GITHUB_WORKSPACE/scripts/eval_summary.mjs"
+          if [ -f "$SUMMARY_SCRIPT" ]; then
+            node "$SUMMARY_SCRIPT"
+          else
+            echo "## ⚠️ Eval did not complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "Setup failed before eval could run. Check the logs above." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload eval artifacts
         if: always()
@@ -105,4 +132,5 @@ jobs:
             eval_results.csv
             eval_meta.json
             eval_report.md
+          if-no-files-found: warn
           retention-days: 30

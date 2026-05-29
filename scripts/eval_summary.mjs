@@ -38,8 +38,13 @@ function badge(passed) {
 
 function main() {
   if (!fs.existsSync(META_PATH)) {
-    console.error("eval_meta.json not found — run pnpm run eval first");
-    process.exit(1);
+    // Eval never ran (setup/seed failed upstream) — write a note but don't
+    // exit 1 here, that would obscure the real failure in the earlier step.
+    const msg = "## ⚠️ Eval did not run\n\nSetup failed before the evaluation could start. Check the **Seed corpus** step above for the root cause.\n";
+    const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+    if (summaryFile) fs.appendFileSync(summaryFile, msg);
+    else console.log(msg);
+    process.exit(0);
   }
 
   const meta = JSON.parse(fs.readFileSync(META_PATH, "utf-8"));
