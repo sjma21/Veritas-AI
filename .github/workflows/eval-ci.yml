@@ -18,18 +18,18 @@ jobs:
     timeout-minutes: 20
 
     services:
-      # chromadb/chroma is Python-based — no wget/curl inside the image.
-      # Override the built-in HEALTHCHECK with a Python urllib call instead.
+      # Use a trivial healthcheck so GitHub Actions marks the container as
+      # ready immediately without quoting-fragile commands. Real readiness
+      # is verified by the "Wait for ChromaDB" curl polling step below.
       chromadb:
         image: chromadb/chroma:latest
         ports:
           - 8000:8000
         options: >-
-          --health-cmd "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v2/heartbeat')\""
-          --health-interval 10s
-          --health-timeout 10s
-          --health-retries 12
-          --health-start-period 30s
+          --health-cmd "true"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 3
 
       redis:
         image: redis:7-alpine
