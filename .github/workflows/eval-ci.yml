@@ -18,12 +18,13 @@ jobs:
     timeout-minutes: 20
 
     services:
-      # No healthcheck here — wget/curl may not exist inside the container.
-      # We poll readiness from the host in the "Wait for services" step instead.
+      # --no-healthcheck disables the image's built-in HEALTHCHECK so GitHub
+      # Actions doesn't wait for it to pass. We poll readiness ourselves below.
       chromadb:
         image: chromadb/chroma:latest
         ports:
           - 8000:8000
+        options: --no-healthcheck
 
       redis:
         image: redis:7-alpine
